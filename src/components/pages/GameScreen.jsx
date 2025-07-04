@@ -1,14 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
-import GameCanvas from "@/components/organisms/GameCanvas";
+import audioService from "@/services/audioService";
+import { shouldPlayMovementSound } from "@/utils/gameUtils";
+import ApperIcon from "@/components/ApperIcon";
 import GameHUD from "@/components/organisms/GameHUD";
+import GameCanvas from "@/components/organisms/GameCanvas";
+import Button from "@/components/atoms/Button";
+import Loading from "@/components/ui/Loading";
 import KillFeed from "@/components/molecules/KillFeed";
 import gameService from "@/services/api/gameService";
-import Button from "@/components/atoms/Button";
-import ApperIcon from "@/components/ApperIcon";
-
 const GameScreen = () => {
   const navigate = useNavigate();
   const [gameState, setGameState] = useState(null);
@@ -78,28 +80,56 @@ const GameScreen = () => {
     return () => clearInterval(gameLoop);
   }, [gameState, isPaused, gameEnded, navigate]);
   
-  // Handle player movement
-  const handlePlayerMove = useCallback(async ({ dx, dy }) => {
+// Handle player movement with audio
+  const previousPositionRef = useRef(null);
+  const lastFootstepTime = useRef(0);
+  
+  const handlePlayerMove = useCallback(async (moveData) => {
     if (!gameState || gameEnded) return;
     
     try {
-      const updatedState = await gameService.movePlayer(gameState, dx, dy);
+      const { dx, dy, dz, position } = moveData;
+      
+      // Update game state
+      const updatedState = await gameService.movePlayer(gameState, dx, dy, dz);
       setGameState(updatedState);
+      
+      // Play movement audio
+      const currentPosition = position || updatedState.player.position;
+      const now = Date.now();
+      
+      if (previousPositionRef.current && shouldPlayMovementSound(previousPositionRef.current, currentPosition)) {
+        // Throttle footstep sounds to prevent audio spam
+        if (now - lastFootstepTime.current > 300) {
+          audioService.playSound('footstep', 0.3);
+          lastFootstepTime.current = now;
+        }
+      }
+      
+      previousPositionRef.current = { ...currentPosition };
     } catch (error) {
       console.error("Movement error:", error);
     }
   }, [gameState, gameEnded]);
   
-  // Handle player shooting
-  const handlePlayerShoot = useCallback(async ({ x, y }) => {
+// Handle player shooting with audio
+  const handlePlayerShoot = useCallback(async (targetData) => {
     if (!gameState || gameEnded) return;
     
     try {
-      const updatedState = await gameService.shootWeapon(gameState, x, y);
+      const { x, y, z } = targetData;
+      const updatedState = await gameService.shootWeapon(gameState, x, y, z);
       setGameState(updatedState);
       
-      // Check for hits and show damage
+      // Play shooting sound
+      const weapon = gameState.player?.currentWeapon;
+      if (weapon) {
+        audioService.playSound('gunshot', 0.6);
+      }
+      
+      // Check for hits and show damage with hit sound
       if (updatedState.hitTarget) {
+        audioService.playSound('hit', 0.4);
         toast.success(`Hit for ${updatedState.damage} damage!`);
       }
     } catch (error) {
@@ -107,30 +137,31 @@ const GameScreen = () => {
     }
   }, [gameState, gameEnded]);
   
-  // Handle weapon selection
+// Handle pause/resume
+  const handlePause = () => {
+    setIsPaused(prev => !prev);
+  };
+
+  // Handle exit game
+  const handleExitGame = () => {
+    setGameEnded(true);
+    navigate("/menu");
+  };
+
+  // Handle weapon selection with audio
   const handleWeaponSelect = useCallback(async (weapon) => {
     if (!gameState || gameEnded) return;
     
     try {
       const updatedState = await gameService.selectWeapon(gameState, weapon);
       setGameState(updatedState);
+      
+      // Play weapon switch sound
+      audioService.playSound('weaponSwitch', 0.4);
     } catch (error) {
       console.error("Weapon selection error:", error);
     }
   }, [gameState, gameEnded]);
-  
-  // Handle pause/resume
-  const handlePause = () => {
-    setIsPaused(!isPaused);
-  };
-  
-  // Handle exit game
-  const handleExitGame = () => {
-    if (window.confirm("Are you sure you want to exit the match?")) {
-      navigate("/");
-    }
-  };
-  
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">

@@ -1,5 +1,7 @@
 import weaponData from "@/services/mockData/weapons.json";
 import { toast } from "react-toastify";
+import { Vector3, calculateDistance3D } from "@/utils/gameUtils";
+import audioService from "@/services/audioService";
 
 class GameService {
   constructor() {
@@ -16,10 +18,10 @@ class GameService {
     
     const weapons = weaponData.slice(0, 4); // Get first 4 weapons
     
-    // Initialize player
+// Initialize player with 3D position
     const player = {
       Id: 1,
-      position: { x: 400, y: 300 },
+      position: new Vector3(0, 0, 20), // x, y, z - start in center, elevated
       health: 100,
       armor: 0,
       weapons: weapons,
@@ -28,9 +30,9 @@ class GameService {
       maxAmmo: weapons[0].clipSize,
       alive: true,
       kills: 0,
-      damage: 0
+      damage: 0,
+      rotation: { x: 0, y: 0, z: 0 } // For 3D orientation
     };
-    
     // Initialize enemies
     this.enemies = this.generateEnemies(8);
     
@@ -67,22 +69,24 @@ class GameService {
     return this.gameState;
   }
 
-  generateEnemies(count) {
+generateEnemies(count) {
     const enemies = [];
     for (let i = 0; i < count; i++) {
       enemies.push({
         Id: i + 2,
-        position: {
-          x: Math.random() * 600 + 100,
-          y: Math.random() * 400 + 100
-        },
+        position: new Vector3(
+          Math.random() * 600 - 300, // -300 to 300
+          Math.random() * 400 - 200, // -200 to 200
+          Math.random() * 20 + 10     // 10 to 30 height
+        ),
         health: 100,
         armor: Math.random() * 50,
         weapons: [weaponData[Math.floor(Math.random() * weaponData.length)]],
         alive: true,
         lastMoveTime: Date.now(),
         target: null,
-        lastShotTime: 0
+        lastShotTime: 0,
+        rotation: { x: 0, y: Math.random() * Math.PI * 2, z: 0 }
       });
     }
     return enemies;
@@ -92,14 +96,15 @@ class GameService {
     const pickups = [];
     const types = ['health', 'armor', 'ammo'];
     
-    for (let i = 0; i < count; i++) {
+for (let i = 0; i < count; i++) {
       pickups.push({
         Id: i + 1,
         type: types[Math.floor(Math.random() * types.length)],
-        position: {
-          x: Math.random() * 700 + 50,
-          y: Math.random() * 500 + 50
-        },
+        position: new Vector3(
+          Math.random() * 700 - 350,  // -350 to 350
+          Math.random() * 500 - 250,  // -250 to 250
+          5                           // Ground level
+        ),
         value: Math.random() * 50 + 25
       });
     }
@@ -138,7 +143,7 @@ class GameService {
     return { ...currentState };
   }
 
-  updateZone(gameState, deltaTime) {
+updateZone(gameState, deltaTime) {
     const zone = gameState.zone;
     zone.shrinkTime -= deltaTime;
     
@@ -147,12 +152,12 @@ class GameService {
       zone.shrinkTime = 5000; // Reset shrink timer
     }
     
-    // Damage players outside zone
+    // Damage players outside zone (use 2D distance for compatibility)
     const player = gameState.player;
     if (player.alive) {
       const distance = Math.sqrt(
-        Math.pow(player.position.x - zone.center.x, 2) +
-        Math.pow(player.position.y - zone.center.y, 2)
+        Math.pow((player.position.x || 0) - zone.center.x, 2) +
+        Math.pow((player.position.y || 0) - zone.center.y, 2)
       );
       
       if (distance > zone.radius) {
@@ -234,15 +239,20 @@ class GameService {
     });
   }
 
-  updateBullets(gameState, deltaTime) {
+updateBullets(gameState, deltaTime) {
     this.bullets = this.bullets.filter(bullet => {
-      bullet.position.x += bullet.velocity.x;
-      bullet.position.y += bullet.velocity.y;
-      bullet.range -= Math.sqrt(bullet.velocity.x ** 2 + bullet.velocity.y ** 2);
+      // Update 3D bullet position
+      const velocity = bullet.velocity;
+      bullet.position = bullet.position.add(velocity.multiply(deltaTime / 1000));
+      
+      const speed = velocity.magnitude();
+      bullet.range -= speed * (deltaTime / 1000);
       
       // Remove bullets that are out of bounds or out of range
-      return bullet.position.x > 0 && bullet.position.x < 800 &&
-             bullet.position.y > 0 && bullet.position.y < 600 &&
+      const pos = bullet.position;
+      return pos.x > -400 && pos.x < 400 &&
+             pos.y > -300 && pos.y < 300 &&
+             pos.z > 0 && pos.z < 100 &&
              bullet.range > 0;
     });
     
@@ -361,43 +371,57 @@ class GameService {
     }
   }
 
-  async movePlayer(gameState, dx, dy) {
+async movePlayer(gameState, dx, dy, dz = 0) {
     const player = gameState.player;
     if (!player.alive) return gameState;
     
-    const newX = Math.max(25, Math.min(775, player.position.x + dx));
-    const newY = Math.max(25, Math.min(575, player.position.y + dy));
+    // Store old position for audio detection
+    const oldPosition = player.position.clone ? player.position.clone() : new Vector3(player.position.x, player.position.y, player.position.z);
     
-    player.position.x = newX;
-    player.position.y = newY;
+    // Update 3D position with bounds checking
+    const newX = Math.max(-375, Math.min(375, (player.position.x || 0) + dx));
+    const newY = Math.max(-275, Math.min(275, (player.position.y || 0) + dy));
+    const newZ = Math.max(10, Math.min(50, (player.position.z || 20) + dz));
+    
+    player.position = new Vector3(newX, newY, newZ);
     
     return gameState;
   }
 
-  async shootWeapon(gameState, targetX, targetY) {
+async shootWeapon(gameState, targetX, targetY, targetZ = 0) {
     const player = gameState.player;
     if (!player.alive || player.currentAmmo <= 0) return gameState;
     
-    const angle = Math.atan2(
-      targetY - player.position.y,
-      targetX - player.position.x
-    );
+    // Calculate 3D shooting direction
+    const playerPos = player.position;
+    const direction = new Vector3(
+      targetX - playerPos.x,
+      targetY - playerPos.y,
+      targetZ - playerPos.z
+    ).normalize();
     
     const weapon = player.currentWeapon;
-    const speed = 12;
+    const speed = 120; // Faster for 3D
     
     this.bullets.push({
-      position: { ...player.position },
-      velocity: {
-        x: Math.cos(angle) * speed,
-        y: Math.sin(angle) * speed
-      },
+      position: playerPos.clone ? playerPos.clone() : new Vector3(playerPos.x, playerPos.y, playerPos.z),
+      velocity: direction.multiply(speed),
       owner: player.Id,
       damage: weapon.damage,
-      range: weapon.range
+      range: weapon.range,
+      startTime: Date.now()
     });
     
     player.currentAmmo--;
+    
+    // Auto-reload when empty
+    if (player.currentAmmo <= 0) {
+      setTimeout(() => {
+        player.currentAmmo = weapon.clipSize;
+        audioService.playSound('reload', 0.5);
+        toast.info('Reloaded!');
+      }, 1500);
+    }
     
     return gameState;
   }

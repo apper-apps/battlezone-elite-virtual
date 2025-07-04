@@ -1,5 +1,255 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useEffect, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { PointerLockControls, Box, Sphere, Plane } from "@react-three/drei";
 import { motion } from "framer-motion";
+import * as THREE from "three";
+
+// First Person Controls Component
+const FirstPersonControls = ({ gameState, onPlayerMove, onPlayerShoot, enabled = true }) => {
+  const { camera, gl } = useThree();
+  const controlsRef = useRef();
+  const velocityRef = useRef(new THREE.Vector3());
+  const directionRef = useRef(new THREE.Vector3());
+  const [moveState, setMoveState] = useState({
+    forward: false,
+    backward: false,
+    left: false,
+    right: false
+  });
+
+  // Handle keyboard input
+  useEffect(() => {
+    if (!enabled) return;
+
+    const handleKeyDown = (event) => {
+      switch (event.code) {
+        case 'KeyW':
+          setMoveState(prev => ({ ...prev, forward: true }));
+          break;
+        case 'KeyS':
+          setMoveState(prev => ({ ...prev, backward: true }));
+          break;
+        case 'KeyA':
+          setMoveState(prev => ({ ...prev, left: true }));
+          break;
+        case 'KeyD':
+          setMoveState(prev => ({ ...prev, right: true }));
+          break;
+      }
+    };
+
+    const handleKeyUp = (event) => {
+      switch (event.code) {
+        case 'KeyW':
+          setMoveState(prev => ({ ...prev, forward: false }));
+          break;
+        case 'KeyS':
+          setMoveState(prev => ({ ...prev, backward: false }));
+          break;
+        case 'KeyA':
+          setMoveState(prev => ({ ...prev, left: false }));
+          break;
+        case 'KeyD':
+          setMoveState(prev => ({ ...prev, right: false }));
+          break;
+      }
+    };
+
+    const handleClick = (event) => {
+      if (event.button === 0) { // Left click
+        const direction = new THREE.Vector3();
+        camera.getWorldDirection(direction);
+        
+        // Convert 3D direction to target position for shooting
+        const targetPos = camera.position.clone().add(direction.multiplyScalar(100));
+        onPlayerShoot({ 
+          x: targetPos.x, 
+          y: targetPos.z, // Use Z as Y for 2D compatibility
+          z: targetPos.y
+        });
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+    gl.domElement.addEventListener('click', handleClick);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
+      gl.domElement.removeEventListener('click', handleClick);
+    };
+  }, [camera, gl, onPlayerShoot, enabled]);
+
+  // Movement frame update
+  useFrame((state, delta) => {
+    if (!enabled || !controlsRef.current) return;
+
+    const velocity = velocityRef.current;
+    const direction = directionRef.current;
+    
+    direction.set(0, 0, 0);
+
+    if (moveState.forward) direction.z -= 1;
+    if (moveState.backward) direction.z += 1;
+    if (moveState.left) direction.x -= 1;
+    if (moveState.right) direction.x += 1;
+
+    direction.normalize();
+
+    const speed = 50; // Units per second
+    velocity.copy(direction).multiplyScalar(speed * delta);
+
+    if (velocity.length() > 0) {
+      // Update camera position
+      camera.position.add(velocity);
+      
+      // Clamp camera position to bounds
+      camera.position.x = Math.max(-375, Math.min(375, camera.position.x));
+      camera.position.z = Math.max(-275, Math.min(275, camera.position.z));
+      camera.position.y = Math.max(10, Math.min(50, camera.position.y));
+
+      // Notify parent about movement
+      onPlayerMove({
+        dx: velocity.x,
+        dy: velocity.z, // Map Z to Y for 2D compatibility
+        dz: velocity.y,
+        position: {
+          x: camera.position.x,
+          y: camera.position.z, // Map Z to Y for 2D compatibility  
+          z: camera.position.y
+        }
+      });
+    }
+  });
+
+  // Update camera position based on player state
+  useEffect(() => {
+    if (gameState?.player?.position) {
+      const pos = gameState.player.position;
+      camera.position.set(
+        pos.x || 0,
+        (pos.z || 0) + 20, // Raise camera above ground
+        pos.y || 0
+      );
+    }
+  }, [gameState?.player?.position, camera]);
+
+  return (
+    <PointerLockControls
+      ref={controlsRef}
+      camera={camera}
+      domElement={gl.domElement}
+      enabled={enabled}
+    />
+  );
+};
+
+// 3D Game Scene Component
+const GameScene = ({ gameState }) => {
+  if (!gameState) return null;
+
+  return (
+    <>
+      {/* Ambient lighting */}
+      <ambientLight intensity={0.3} />
+      
+      {/* Directional lighting */}
+      <directionalLight
+        position={[50, 100, 50]}
+        intensity={1}
+        castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-far={200}
+        shadow-camera-left={-100}
+        shadow-camera-right={100}
+        shadow-camera-top={100}
+        shadow-camera-bottom={-100}
+      />
+
+      {/* Ground plane */}
+      <Plane
+        args={[800, 600]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 0]}
+        receiveShadow
+      >
+        <meshLambertMaterial color="#1A1F1B" />
+      </Plane>
+
+      {/* Terrain blocks */}
+      {Array.from({ length: 20 }, (_, x) =>
+        Array.from({ length: 15 }, (_, y) => {
+          if ((x * 40 + y * 40) % 80 === 0) {
+            return (
+              <Box
+                key={`terrain-${x}-${y}`}
+                args={[20, 2, 20]}
+                position={[x * 40 - 400, 1, y * 40 - 300]}
+                castShadow
+                receiveShadow
+              >
+                <meshLambertMaterial color="#2C4A3D" />
+              </Box>
+            );
+          }
+          return null;
+        })
+      )}
+
+      {/* Zone visualization */}
+      {gameState.zone && (
+        <mesh
+          position={[gameState.zone.center.x - 400, 0.1, gameState.zone.center.y - 300]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <ringGeometry args={[gameState.zone.radius - 5, gameState.zone.radius, 64]} />
+          <meshBasicMaterial color="#FF6B35" transparent opacity={0.3} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+
+      {/* Enemies */}
+      {gameState.enemies?.filter(enemy => enemy.alive).map(enemy => (
+        <Box
+          key={enemy.Id}
+          args={[12, 20, 12]}
+          position={[enemy.position.x - 400, 10, enemy.position.y - 300]}
+          castShadow
+        >
+          <meshLambertMaterial color="#EF5350" />
+        </Box>
+      ))}
+
+      {/* Bullets */}
+      {gameState.bullets?.map((bullet, index) => (
+        <Sphere
+          key={index}
+          args={[1.5]}
+          position={[bullet.position.x - 400, 5, bullet.position.y - 300]}
+        >
+          <meshBasicMaterial color="#FFA726" emissive="#FFA726" emissiveIntensity={0.5} />
+        </Sphere>
+      ))}
+
+      {/* Pickups */}
+      {gameState.pickups?.map(pickup => (
+        <Box
+          key={pickup.Id}
+          args={[8, 8, 8]}
+          position={[pickup.position.x - 400, 4, pickup.position.y - 300]}
+          castShadow
+        >
+          <meshLambertMaterial 
+            color={pickup.type === 'health' ? '#4CAF50' : pickup.type === 'armor' ? '#2196F3' : '#FFA726'}
+            emissive={pickup.type === 'health' ? '#4CAF50' : pickup.type === 'armor' ? '#2196F3' : '#FFA726'}
+            emissiveIntensity={0.2}
+          />
+        </Box>
+      ))}
+    </>
+  );
+};
 
 const GameCanvas = ({ 
   gameState, 
@@ -8,254 +258,70 @@ const GameCanvas = ({
   onGameUpdate,
   className = "" 
 }) => {
-  const canvasRef = useRef(null);
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const animationFrameRef = useRef();
-  
-  // Game constants
-  const CANVAS_WIDTH = 800;
-  const CANVAS_HEIGHT = 600;
-  const PLAYER_SIZE = 12;
-  const BULLET_SIZE = 3;
-  const ENEMY_SIZE = 12;
-  
-  // Handle mouse movement for aiming
+  const [isPointerLocked, setIsPointerLocked] = useState(false);
+
+  const handlePointerLockChange = () => {
+    setIsPointerLocked(document.pointerLockElement !== null);
+  };
+
   useEffect(() => {
-    const handleMouseMove = (e) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      setMousePosition({ x, y });
-    };
-    
-    const handleClick = (e) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      onPlayerShoot({ x, y });
-    };
-    
-    const canvas = canvasRef.current;
-    if (canvas) {
-      canvas.addEventListener('mousemove', handleMouseMove);
-      canvas.addEventListener('click', handleClick);
-      
-      return () => {
-        canvas.removeEventListener('mousemove', handleMouseMove);
-        canvas.removeEventListener('click', handleClick);
-      };
-    }
-  }, [onPlayerShoot]);
-  
-  // Handle keyboard input
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      const moveSpeed = 3;
-      let dx = 0, dy = 0;
-      
-      switch(e.key.toLowerCase()) {
-        case 'w':
-        case 'arrowup':
-          dy = -moveSpeed;
-          break;
-        case 's':
-        case 'arrowdown':
-          dy = moveSpeed;
-          break;
-        case 'a':
-        case 'arrowleft':
-          dx = -moveSpeed;
-          break;
-        case 'd':
-        case 'arrowright':
-          dx = moveSpeed;
-          break;
-      }
-      
-      if (dx !== 0 || dy !== 0) {
-        onPlayerMove({ dx, dy });
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onPlayerMove]);
-  
-  // Render game
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    
-    const render = () => {
-      // Clear canvas
-      ctx.fillStyle = '#0F1410';
-      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-      
-      // Draw terrain pattern
-      ctx.fillStyle = '#1A1F1B';
-      for (let x = 0; x < CANVAS_WIDTH; x += 40) {
-        for (let y = 0; y < CANVAS_HEIGHT; y += 40) {
-          if ((x + y) % 80 === 0) {
-            ctx.fillRect(x, y, 20, 20);
-          }
-        }
-      }
-      
-      // Draw zone circle
-      if (gameState.zone) {
-        ctx.strokeStyle = '#FF6B35';
-        ctx.lineWidth = 3;
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        ctx.arc(
-          gameState.zone.center.x, 
-          gameState.zone.center.y, 
-          gameState.zone.radius, 
-          0, 
-          2 * Math.PI
-        );
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      
-      // Draw enemies
-      if (gameState.enemies) {
-        gameState.enemies.forEach(enemy => {
-          if (enemy.alive) {
-            ctx.fillStyle = '#EF5350';
-            ctx.fillRect(
-              enemy.position.x - ENEMY_SIZE/2,
-              enemy.position.y - ENEMY_SIZE/2,
-              ENEMY_SIZE,
-              ENEMY_SIZE
-            );
-            
-            // Enemy health bar
-            const healthWidth = (enemy.health / 100) * ENEMY_SIZE;
-            ctx.fillStyle = '#4CAF50';
-            ctx.fillRect(
-              enemy.position.x - ENEMY_SIZE/2,
-              enemy.position.y - ENEMY_SIZE/2 - 8,
-              healthWidth,
-              3
-            );
-          }
-        });
-      }
-      
-      // Draw player
-      if (gameState.player && gameState.player.alive) {
-        ctx.fillStyle = '#4CAF50';
-        ctx.fillRect(
-          gameState.player.position.x - PLAYER_SIZE/2,
-          gameState.player.position.y - PLAYER_SIZE/2,
-          PLAYER_SIZE,
-          PLAYER_SIZE
-        );
-        
-        // Player direction indicator
-        const angle = Math.atan2(
-          mousePosition.y - gameState.player.position.y,
-          mousePosition.x - gameState.player.position.x
-        );
-        
-        ctx.strokeStyle = '#66BB6A';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(gameState.player.position.x, gameState.player.position.y);
-        ctx.lineTo(
-          gameState.player.position.x + Math.cos(angle) * 20,
-          gameState.player.position.y + Math.sin(angle) * 20
-        );
-        ctx.stroke();
-      }
-      
-      // Draw bullets
-      if (gameState.bullets) {
-        ctx.fillStyle = '#FFA726';
-        gameState.bullets.forEach(bullet => {
-          ctx.fillRect(
-            bullet.position.x - BULLET_SIZE/2,
-            bullet.position.y - BULLET_SIZE/2,
-            BULLET_SIZE,
-            BULLET_SIZE
-          );
-        });
-      }
-      
-      // Draw pickups
-      if (gameState.pickups) {
-        gameState.pickups.forEach(pickup => {
-          ctx.fillStyle = pickup.type === 'health' ? '#4CAF50' : '#2196F3';
-          ctx.fillRect(
-            pickup.position.x - 8,
-            pickup.position.y - 8,
-            16,
-            16
-          );
-          
-          // Pickup glow effect
-          ctx.shadowColor = pickup.type === 'health' ? '#4CAF50' : '#2196F3';
-          ctx.shadowBlur = 10;
-          ctx.fillRect(
-            pickup.position.x - 6,
-            pickup.position.y - 6,
-            12,
-            12
-          );
-          ctx.shadowBlur = 0;
-        });
-      }
-      
-      animationFrameRef.current = requestAnimationFrame(render);
-    };
-    
-    render();
-    
+    document.addEventListener('pointerlockchange', handlePointerLockChange);
     return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
+      document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
-  }, [gameState, mousePosition]);
-  
+  }, []);
+
   return (
     <motion.div 
-      className={`relative ${className}`}
+      className={`relative w-full h-full ${className}`}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5 }}
     >
-      <canvas
-        ref={canvasRef}
-        width={CANVAS_WIDTH}
-        height={CANVAS_HEIGHT}
-        className="game-canvas rounded-lg cursor-crosshair"
-      />
-      
-      {/* Crosshair */}
-      <div 
-        className="crosshair"
-        style={{
-          left: mousePosition.x - 10,
-          top: mousePosition.y - 10,
+      <Canvas
+        camera={{ 
+          position: [0, 20, 0], 
+          fov: 75,
+          near: 0.1,
+          far: 1000
         }}
-      />
-      
+        shadows
+        className="game-canvas rounded-lg"
+        style={{ background: 'linear-gradient(135deg, #0F1410 0%, #1A1F1B 100%)' }}
+      >
+        <FirstPersonControls
+          gameState={gameState}
+          onPlayerMove={onPlayerMove}
+          onPlayerShoot={onPlayerShoot}
+          enabled={true}
+        />
+        <GameScene gameState={gameState} />
+      </Canvas>
+
+      {/* Instructions overlay */}
+      {!isPointerLocked && (
+        <div className="absolute inset-0 bg-black/50 flex items-center justify-center pointer-events-none">
+          <div className="text-white text-center">
+            <p className="text-xl font-bold mb-2">Click to Play</p>
+            <p className="text-sm">WASD to move • Mouse to look • Click to shoot</p>
+          </div>
+        </div>
+      )}
+
+      {/* Crosshair */}
+      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+        <div className="w-6 h-6 border-2 border-tactical-600 rounded-full opacity-80" />
+        <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-tactical-600 rounded-full transform -translate-x-1/2 -translate-y-1/2" />
+      </div>
+
       {/* Zone warning overlay */}
-      {gameState.player && gameState.zone && (
+      {gameState?.player && gameState?.zone && (
         (() => {
+          const playerPos = gameState.player.position;
+          const zoneCenter = gameState.zone.center;
           const distance = Math.sqrt(
-            Math.pow(gameState.player.position.x - gameState.zone.center.x, 2) +
-            Math.pow(gameState.player.position.y - gameState.zone.center.y, 2)
+            Math.pow((playerPos.x || 0) - zoneCenter.x, 2) +
+            Math.pow((playerPos.y || 0) - zoneCenter.y, 2)
           );
           const isOutsideZone = distance > gameState.zone.radius;
           
