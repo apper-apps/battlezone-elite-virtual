@@ -1,0 +1,74 @@
+[
+  {
+    "Id": 1,
+    "type": "pistol",
+    "name": "M1911",
+    "damage": 35,
+    "range": 100,
+    "fireRate": 400,
+    "ammoType": ".45 ACP",
+    "clipSize": 7,
+    "reloadTime": 2000,
+    "accuracy": 0.8
+  },
+  {
+    "Id": 2,
+    "type": "rifle",
+    "name": "AK-47",
+    "damage": 45,
+    "range": 200,
+    "fireRate": 600,
+    "ammoType": "7.62x39",
+    "clipSize": 30,
+    "reloadTime": 3000,
+    "accuracy": 0.7
+  },
+  {
+    "Id": 3,
+    "type": "shotgun",
+    "name": "M590",
+    "damage": 80,
+    "range": 50,
+    "fireRate": 120,
+    "ammoType": "12 Gauge",
+    "clipSize": 8,
+    "reloadTime": 4000,
+    "accuracy": 0.6
+  },
+  {
+    "Id": 4,
+    "type": "sniper",
+    "name": "AWM",
+    "damage": 120,
+    "range": 400,
+    "fireRate": 60,
+    "ammoType": ".338 Lapua",
+    "clipSize": 5,
+    "reloadTime": 5000,
+    "accuracy": 0.95
+  },
+  {
+    "Id": 5,
+    "type": "rifle",
+    "name": "M4A1",
+    "damage": 40,
+    "range": 180,
+    "fireRate": 700,
+    "ammoType": "5.56x45",
+    "clipSize": 30,
+    "reloadTime": 2800,
+    "accuracy": 0.75
+  },
+  {
+    "Id": 6,
+    "type": "pistol",
+    "name": "Glock 17",
+    "damage": 28,
+    "range": 80,
+    "fireRate": 500,
+    "ammoType": "9mm",
+    "clipSize": 17,
+    "reloadTime": 1800,
+    "accuracy": 0.75
+  }
+]
